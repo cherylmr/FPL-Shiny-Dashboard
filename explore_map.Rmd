@@ -1,0 +1,131 @@
+---
+title: "FPLFeatureReduction"
+author: "Cheryl Moses"
+date: "2026-10-13"
+output: html_document
+---
+
+#
+
+FPL (Fantasy Premier League) is the f2p fantasy football game for the English Premier League. Managers have a £100m budget to assemble a squad of players who earn points based on real-life match performance each gameweek. 
+
+>This analysis groups outfield players by how they play (their per-90 attacking profiles) and then looks within each group for the cheapest player who has still returned well in FPL points 
+
+## Data and Preparation
+
+The data is derived from FPL's official JSON API:  [fantasy.premierleague.com/api](https://fantasy.premierleague.com/api/), mainly the bootstrap-static endpoint, which returns a season-to-date table of all 667 players. The following variables will be used for this analysis:
+
+| Variable | Description |
+| ----------- | ----------- |
+| goals_scored | self explanatory |
+| assists | passes that led to a goal scored |
+| expected_goals (xG) | number of goals a player should score based on chances |
+| expected_assists (xA) | number of assists a player should have had based on quality of chance created |
+| threat | FPL-generated score for goal danger|
+| creativity |FPL-generated score for how much player creates chances for others |
+| influence | FPL-generated score for how much a player affects a match overall |
+
+The following transformations will be applied to normalise this data: 
+1. This analysis will only focus on outfielders (defenders, midfielders and forwards) since columns that frame goalkeeper skills are outside of the scope of this analysis.
+2. Variables will be rescaled to 90-minute ('per-90') full matches to account for variation in minutes played. That being said, players with less than 270 minutes played so far this season will be excluded to disregard players with inflated form from low playing time. 
+
+## Caveats
+This analysis does not aim to predict scoring in the future, or anything about defending or goalkeeping ability of players. 
+
+The main Limitations of this data are:
+- Only 6 gameweeks have been played of the 38 (sparse data)
+- Per-90 values from around 270 to 540 minutes are noisy, and the 270-minute cutoff is just a random design choice
+- xG and xA are model estimates, and the FPL indices are FPL's own formulas.
+- 'Price' in this analysis means current player price at the time this was run
+- The FPL API is unofficial and is subject to change.
+- Results describe this snapshot and will shift as the season goes on.
+
+```{r setup, message = FALSE, warning = FALSE}
+#load in packages
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(uwot)
+library(tidyr)
+
+players <- readRDS("C:/Users/chery/OneDrive/Desktop/RStudio/FPL Shiny App/data/players.rds")
+
+#define the minutes played cutoff
+min_minutes <- 270
+
+```
+
+# EDA {.tabset}
+
+## Exploratory Data Analysis
+
+### Initial view and double-check for data tidiness
+
+Lets first step through our dataset to make sure the column types are as expected.
+```{r}
+raw  <- readRDS("data/elements_raw.rds")
+meta <- readRDS("data/meta.rds")
+
+#view dataset
+glimpse(players) #note, the API returns several numeric fields (xG, xA, threat, creativity, influence) as text so these were converted to numbers when the data was pulled
+
+#duplicate display names in the dataset? 
+players %>% count(web_name, team) %>% filter(n > 1)
+
+#any non-zero counts?
+colSums(is.na(players))
+
+#number of players per position
+players %>% count(element_type, position)
+
+#number of players per current status
+players %>%
+  group_by(status) %>%
+  summarise(players = n(),
+            with_270_mins = sum(minutes >= min_minutes & position != "GKP"))
+
+```
+The above EDA tells us the following: 
+- Column types are as expected
+- No missing values
+- There are likely players with the same display name, but when you combine it with their team code then this combination is unique - which is important for tooltips
+- Each player in the dataset is associated with only one position (as expected) 
+- The aggregated status breakdown reveals that unavailable players (u) do not meet the minutes threshhold to be included in this analysis, which is desirable as unavailable players should not need to be selected.
+
+| Status | Description |
+| ----------- | ----------- |
+| a | available |
+| d | doubtful |
+| i | injured |
+| s | suspended |
+| u | unavailable |
+
+### Transformations to be applied to dataset and per-90 counts and outfielders filters
+
+```{r}
+
+#filter dataset to Outfielders and >270 minutes played
+per90 <- players %>%
+  filter(minutes >= min_minutes, position != "GKP") %>%
+  mutate(across(c(goals_scored, assists, expected_goals, expected_assists,
+                  influence, creativity, threat),
+                ~ .x * 90 / minutes, .names = "{.col}_p90"))
+
+nrow(per90) # should be 198
+
+#pivot longer
+per90_long <- per90 %>%
+  select(id, web_name, position, ends_with("_p90")) %>%
+  pivot_longer(ends_with("_p90"), names_to = "feature", values_to = "value")
+
+ggplot(per90_long, aes(value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~ feature, scales = "free")
+
+ggplot(per90_long, aes(position, value)) +
+  geom_boxplot() +
+  facet_wrap(~ feature, scales = "free_y")
+
+```
+
+##
