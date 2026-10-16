@@ -8,7 +8,7 @@ library(DT)
 players <- readRDS("C:/Users/chery/OneDrive/Desktop/RStudio/FPL Shiny App/data/players.rds")
 pos_cols <- c(GKP = "#8A8F98", DEF = "#2F6DB5", MID = "#1F9D78", FWD = "#D9822B")
 
-#container for my page
+#container for my pages
 ui <- page_navbar(
   id = "nav",
   title = "FPL (Fantasy Premiere League) Insights",
